@@ -1,8 +1,8 @@
 ---
-title: "ESOC Final Project"
-subtitle: "Worth a Shot?"
+title: "Worth a Shot?"
+subtitle: "Anlaysis of NBA Shots (2003-2024)"
 author: "Elbert Scot Carpenter"
-output: pdf_document
+output: html_document
 bibliography: references.bib
 ---
 
@@ -764,7 +764,7 @@ The boxplot shows that there is a significant difference in field goal percentag
 
 ```{r, warning = FALSE}
 ggplot(zoneNames, aes(x = ZONE_NAME, y = FGPerc, fill = SHOT_TYPE)) +
-  geom_boxplot() +  # Add notches and remove outliers
+  geom_boxplot() +
   scale_fill_manual(values = c('2PT Field Goal' = '#ADD8EF', '3PT Field Goal' = '#FF999D')) +
   theme_minimal() +
   theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
