@@ -1,0 +1,895 @@
+---
+title: "ESOC Final Project"
+subtitle: "Worth a Shot?"
+author: "Elbert Scot Carpenter"
+output: pdf_document
+bibliography: references.bib
+---
+
+Load in libraries.
+
+```{r, warning = FALSE}
+library(tidyverse)
+library(stringr)
+library(ggrepel)
+set.seed(204)
+```
+
+Load in data from csv file.
+
+```{r}
+NBA <- read.csv('data/NBA_All_04-24.csv')
+```
+
+## Data Cleaning
+
+Look for NA values in the data.
+
+```{r}
+# Get the names of the columns that contain NA values.
+NACols = NBA %>%
+  select_if(~ any(is.na(.))) %>%
+  names()
+
+# Create a data frame that contains the observations that contain NA values.
+NAObs <- NBA %>%
+  filter(if_any(all_of(NACols), is.na)) # Filter and get the values in the columns if they are NA.
+
+# Take a look at the data frame.
+head(NAObs)
+```
+The NA values appear to only be inside of the `POSITION_GROUP` and `POSITION` features. 
+```{r}
+# Check the player names containing the NA values.
+summary(as.factor(NAObs$PLAYER_NAME))
+```
+The players displayed above are the ones that contain the NA values for their features. Many of these names have a period or a suffix attached to them. I will focus my attention on cleaning all names in the data, and then try and match the `PLAYER_ID` to be able to identify the player's position. Once a player's position is known, the position group can be derived.
+
+```{r}
+# Clean all Player names to remove periods, suffixes, and trailing spaces.
+NBA <- NBA %>%
+  mutate(PLAYER_NAME = str_replace_all(PLAYER_NAME, "\\.", "")) %>%
+  mutate(PLAYER_NAME = str_replace_all(PLAYER_NAME, "\\s+Sr|\\s+Jr", "")) %>%
+  mutate(PLAYER_NAME = str_trim(PLAYER_NAME, side = 'right'))
+
+# Reassign NA value observations with cleaned name.
+NAObs <- NBA %>%
+  filter(if_any(all_of(NACols), is.na))
+
+# Check that names have changed.
+summary(as.factor(NAObs$PLAYER_NAME))
+
+# Check the number of NA values inside of POSITION.
+summary(as.factor(NAObs$POSITION))
+```
+The names of the players look much better. Out of over 4 million observations, only 7930 values are found to have NA values. The goal will be to minimize the amount of NA values in the data, however, this amount of NA values compared to the entire length of the data is minuscule. If these values are unable to be derived, meaningful insights can still be concluded without the inclusion of these observation in the data.
+
+Another consideration to take while cleaning this data is that players can take on different positions during the course of a season, and even during the same game. To take this into account for determining the missing position values, the player IDs will be grouped and the most frequent position for that player will be used for replacing NA values. This will only have an effect on the players that have missing values. Since that number is trivial compared to the rest of the data, this should not change conclusions made from this data.
+
+```{r}
+# Remove the observations with NA values.
+NBAFull <- NBA %>%
+  filter(!is.na(POSITION))
+
+# Get all players most frequent position and group.
+freqPos <- NBAFull %>%
+  group_by(PLAYER_ID) %>%
+  summarize(POSITION = names(sort(table(POSITION), decreasing = TRUE)[1]))
+
+# Join on player ID to fill NA position.
+NAObs <- NAObs %>%
+  left_join(freqPos, by = 'PLAYER_ID') %>%
+  mutate(POSITION = coalesce(POSITION.x, POSITION.y)) %>%
+  select(-POSITION.x, -POSITION.y)
+
+# Check number of NAs now.
+summary(as.factor(NAObs$POSITION))
+```
+
+After matching the player IDs, the number of NA values dropped down from 7930 to 3747. The observations that were able to be matched will be stored in their own data frame, while further examination of the observations with NA values continues.
+
+```{r}
+# Get the values whose position were able to be determined.
+keepNA <- NAObs %>%
+  filter(!is.na(POSITION))
+
+# Remove the values whose positions were determined.
+NAObs <- NAObs %>%
+  filter(is.na(POSITION))
+
+# Examine the number of observations left, and the years that they occur.
+summary(as.factor(NAObs$SEASON_2))
+```
+
+Of the remaining NA values, the majority of them take place during the 2022-23 and 2023-24 seasons. These two seasons will be kept, while the rest will be removed from the data and rest of analysis.
+
+```{r}
+# Get the observations that occur in the 2022-23 and 2023-24 seasons.
+NAObs <- NAObs %>%
+  filter(SEASON_2 == '2022-23' | SEASON_2 == '2023-24')
+
+# Check the names and number of observations left.
+summary(as.factor(NAObs$PLAYER_NAME))
+```
+
+From the observations that are left, there are only three that have a significant amount of observations: AJ Green, GG Jackson, and Xavier Tillman. These three will be kept and the others removed. To find these players' positions, [@basketballReference] will be used to provide the missing information.
+
+```{r}
+# Create a named list to input missing position values.
+missingPos <- list('AJ Green' = 'SG',
+                   'GG Jackson' = 'PF',
+                   'Xavier Tillman' = 'C')
+
+# Input names from named list, then filter out remaining NA values.
+NAObs <- NAObs %>%
+  mutate(POSITION = ifelse(PLAYER_NAME %in% names(missingPos), as.character(missingPos[PLAYER_NAME]),
+                           POSITION)) %>%
+  filter(!is.na(POSITION))
+
+# Combine data frames together.
+keepNA <- bind_rows(keepNA, NAObs)
+
+summary(as.factor(keepNA$POSITION))
+
+```
+
+Of the 7930 observations that had missing values for the `POSITION` feature, 5652 were able to be derived. Now to input the values for each of these observation's position group. Then the observations will be added back to the main data for analysis.
+
+```{r}
+# Initialize named list with position to position group mappings.
+groups <- list( 'C' = 'C',
+                'PF' = 'F',
+                'SF' = 'F',
+                'SG' = 'G'
+)
+
+# Input Position Groups based on named list.
+keepNA <- keepNA %>%
+mutate(POSITION_GROUP = ifelse(is.na(POSITION_GROUP), as.character(groups[POSITION]), POSITION_GROUP))
+
+# Add back into main data.
+NBAFull <- bind_rows(NBAFull, keepNA)
+
+# Examine all positions.
+summary(as.factor(NBAFull$POSITION))
+```
+
+Examining the different types of positions within the main data, there are some players that are considered to play more than one position. This could be useful information to have but for this analysis these positions will be trimmed to just the first main position of each player. A binary feature will be added to the data to track if the player is hybrid or not to maintain this information.
+
+```{r}
+# Create new feature and trim the player's position.
+NBAFull <- NBAFull %>%
+  mutate(HYBRID = ifelse(POSITION %in% names(groups), 0, 1),
+         POSITION = str_extract(POSITION, "^[^-]+"))
+
+# Check results.
+summary(as.factor(NBAFull$POSITION))
+```
+
+The next feature to simplify is the `ACTION_TYPE`, which has 70 unique values inside of it. These will be simplified by taking the last two words of the string, which identify the broader category of shot. The capitalization of the words inside of the feature is also inconsistent, these will be fixed as well.
+
+```{r}
+# Fix capitalization of feature, and get just the last two words in the string.
+NBAFull <- NBAFull %>%
+  mutate(ACTION_TYPE = str_to_title(ACTION_TYPE),
+         ACTION_TYPE = str_extract(ACTION_TYPE, "\\w+\\s+\\w+$"))
+
+# Check Results.
+summary(as.factor(NBAFull$ACTION_TYPE))
+```
+```{r}
+# Change Zone metrics to features.
+NBAFull$ZONE_NAME <- factor(NBAFull$ZONE_NAME, levels = c('Left Side', 'Left Side Center',
+                                                          'Center', 'Right Side Center', 'Right Side'))
+
+NBAFull$ZONE_RANGE <- factor(NBAFull$ZONE_RANGE, levels = c('Backcourt Shot', 'Less Than 8 ft.',
+                                                      '8-16 ft.', '16-24 ft.', '24+ ft.'))
+```
+
+
+The feature of `ACTION_TYPE` has been condensed down to 9 unique values from 70 unique values. The zone metrics have now been turned into factors allow for proper ordering during plotting.
+
+### Defined Functions
+Defined Functions Now add functions to calculate points, get percentages, and get a data frame of desired metrics:
+```{r}
+calcFGPoints <- function(FG, pts) {
+  # Calculates the total number of points scored from field goals.
+  # FG = Number of Field Goal made.
+  # pts = Integer value for number of points score by FG.
+  # Returns the amount of points scored by designated Field Goal type.
+  return(FG * pts)
+}
+
+
+calcPerc <- function(num, denom) {
+  # Calculates percentage with 0 divisor handled.
+  # num = numerator, usually in the form of Field Goals made.
+  # den = denominator, usually in the form of Field Goals attempted.
+  # Returns rounded percentage with 0 divisor handled.
+  if (denom > 0) {
+    return(round(num / denom, 3))
+  } else {
+    return(0)
+  }
+}
+
+
+getSeasonStats <- function(data, seasons) {
+  # Used to get League wide statistics for each season.
+  # data = Dataframe containing desired data.
+  # season = A list of Strings in the format of 'yyyy-yy' ('2023-24')
+  # Returns a dataframe with each row containing summary statistics.
+  outDF <- data %>%
+  filter(SEASON_2 %in% seasons) %>%
+  group_by(SEASON_2) %>%
+  summarize(GP = n_distinct(GAME_ID), # Games Played.
+            FG = sum(SHOT_MADE), # Shots made.
+            FGA = n(), # Shots attempted.
+            FG2 = sum(SHOT_MADE[SHOT_TYPE == '2PT Field Goal']), # 2pt FG made.
+            FGA2 = sum(SHOT_TYPE == '2PT Field Goal'), # 2pt FG Attempted.
+            FG3 = sum(SHOT_MADE[SHOT_TYPE == '3PT Field Goal']), # 3pt FG made.
+            FGA3 = sum(SHOT_TYPE == '3PT Field Goal'), # 3pt FG Attempted.
+            PTS2 = calcFGPoints(FG2, 2), # Points scored by 2pt FG.
+            PTS3 = calcFGPoints(FG3, 3), # Points scored by 3pt FG.
+            TotPts = PTS2 + PTS3, # Total points scored.
+            PPG = calcPerc(TotPts, GP), # Average points per game (both teams).
+            PG2 = calcPerc(PTS2, GP), # Average points from 2 point field goals per game.
+            PG3 = calcPerc(PTS3, GP), # Average points from 3 point field goals per game.
+            FG2Perc = calcPerc(FG2, FGA2), # Total 2pt FG%.
+            FG3Perc = calcPerc(FG3, FGA3), # total 3pt FG%.
+            FGPerc = calcPerc(FG, FGA)) # Total FG%.
+  
+  return(outDF)
+}
+
+
+bnomEvalSims <- function(sims, trials, FGPerc2, FGPerc3, conductT = FALSE) {
+  # Used to run Binomial simulations and report results through histograms.
+  # sims - Integer value that determines the number of simulations to be run.
+  # trials - Integer value that determines the number of trials within the simulation.
+  # FGPerc2 - Double value that represents the 2pt FG%.
+  # FGPerc3 - Double value that represents the 3pt FG%.
+  # plotResults - Boolean value to indicate if histogram should be reported. Default: TRUE.
+  
+  # Set the seed.
+  set.seed(204)
+  
+  # Run simulations.
+  success2 <- rbinom(sims, trials, FGPerc2)
+  success3 <- rbinom(sims, trials, FGPerc3)
+    
+  # Calculate points per simulation.
+  pts2 <- success2 * 2
+  pts3 <- success3 * 3
+  
+  # Report results.
+  subtitle = paste('Number of simulations:', sims,'with', trials, 'trials. P(2pt) =', 
+                   FGPerc2,', P(3pt) =', FGPerc3)
+  
+  # Create plot.
+  plot <- ggplot() +
+    geom_histogram(aes(x = pts2, y = after_stat(density), fill = '2-point'),
+                   binwidth = 5, color = 'black', alpha = 0.5, position = 'identity') +
+    geom_histogram(aes(x = pts3, y = after_stat(density), fill = '3-point'),
+                   binwidth = 5, color = 'black', alpha = 0.5, position = 'identity') +
+    scale_fill_manual( name = 'Field Goal Type', values = c('2-point' = 'blue', '3-point' = 'red'),
+                       labels = c('2-point' = '2-point', '3-point' = '3-point')) +
+    theme_minimal() +
+    theme(legend.background = element_rect(fill = 'white', color = 'black', 
+                                           linewidth = 0.4, linetype = 'solid'),
+          plot.background = element_rect(fill = 'white', color = 'white')) +
+    ggtitle('Simulated Points Scored from 2-point and 3-point Field Goals') +
+    labs(subtitle = subtitle, x = 'Total Points', y = 'Density')
+  
+  # Print plot to ensure execution before return.
+  print(plot)
+  
+  # Conduct t-test
+  if (conductT) {
+    t.test(pts2, pts3)
+  }
+}
+```
+### Court Plot
+
+This function and plot that is created from running it was developed by Dom Samangy [@Samangy].
+```{r} 
+# ------------------------- Creating Court and Plotting
+circle_points = function(center = c(0, 0), radius = 1, npoints = 360) {
+  angles = seq(0, 2 * pi, length.out = npoints)
+  return(data_frame(x = center[1] + radius * cos(angles),
+                    y = center[2] + radius * sin(angles)))
+}
+
+width = 50
+height = 94 / 2
+key_height = 19
+inner_key_width = 12
+outer_key_width = 16
+backboard_width = 6
+backboard_offset = 4
+neck_length = 0.5
+hoop_radius = 0.75
+hoop_center_y = backboard_offset + neck_length + hoop_radius
+three_point_radius = 23.75
+three_point_side_radius = 22
+three_point_side_height = 14
+
+court_themes = list(
+  light = list(
+    court = 'floralwhite',
+    lines = 'black',
+    text = '#222222',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 1,
+    hex_border_color = '#000000'
+  ),
+  dark = list(
+    court = '#000004',
+    lines = '#999999',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = '#000000'
+  ),
+  ppt = list(
+    court = 'gray15',
+    lines = 'white',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = 'gray15'
+),
+  white = list(
+    court = 'white',
+    lines = 'black',
+    text = 'black',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = 'gray15'
+)
+)
+
+plot_court = function(court_theme = court_themes$light, use_short_three = FALSE) {
+  if (use_short_three) {
+    three_point_radius = 22
+    three_point_side_height = 0
+  }
+  
+  court_points = data_frame(
+    x = c(width / 2, width / 2, -width / 2, -width / 2, width / 2),
+    y = c(height, 0, 0, height, height),
+    desc = 'perimeter'
+  )
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(outer_key_width / 2, outer_key_width / 2, -outer_key_width / 2, -outer_key_width / 2),
+    y = c(0, key_height, key_height, 0),
+    desc = 'outer_key'
+  ))
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(-backboard_width / 2, backboard_width / 2),
+    y = c(backboard_offset, backboard_offset),
+    desc = 'backboard'
+  ))
+  
+  court_points = bind_rows(court_points , data_frame(
+    x = c(0, 0), y = c(backboard_offset, backboard_offset + neck_length), desc = 'neck'
+  ))
+  
+  foul_circle = circle_points(center = c(0, key_height), radius = inner_key_width / 2)
+  
+  foul_circle_top = filter(foul_circle, y > key_height) %>%
+    mutate(desc = 'foul_circle_top')
+  
+  foul_circle_bottom = filter(foul_circle, y < key_height) %>%
+    mutate(
+      angle = atan((y - key_height) / x) * 180 / pi,
+      angle_group = floor((angle - 5.625) / 11.25),
+      desc = paste0('foul_circle_bottom_', angle_group)
+    ) %>%
+    filter(angle_group %% 2 == 0) %>%
+    select(x, y, desc)
+  
+  hoop = circle_points(center = c(0, hoop_center_y), radius = hoop_radius) %>%
+    mutate(desc = 'hoop')
+  
+  restricted = circle_points(center = c(0, hoop_center_y), radius = 4) %>%
+    filter(y >= hoop_center_y) %>%
+    mutate(desc = 'restricted')
+  
+  three_point_circle = circle_points(center = c(0, hoop_center_y), radius = three_point_radius) %>%
+    filter(y >= three_point_side_height, y >= hoop_center_y)
+  
+  three_point_line = data_frame(
+    x = c(three_point_side_radius, three_point_side_radius, three_point_circle$x, -three_point_side_radius, -three_point_side_radius),
+    y = c(0, three_point_side_height, three_point_circle$y, three_point_side_height, 0),
+    desc = 'three_point_line'
+  )
+  
+  court_points = bind_rows(
+    court_points,
+    foul_circle_top,
+    foul_circle_bottom,
+    hoop,
+    restricted,
+    three_point_line
+  )
+  
+  court_points <- court_points
+  
+  ggplot() +
+    geom_path(
+      data = court_points,
+      aes(x = x, y = y, group = desc),
+      color = court_theme$lines, sizes = 2
+    ) +
+    coord_fixed(ylim = c(0, 45), xlim = c(-25, 25)) +
+    theme_minimal(base_size = 22) +
+    theme(
+      text = element_text(color = court_theme$text),
+      plot.background = element_rect(fill = 'gray15', color = 'gray15'),
+      panel.background = element_rect(fill = court_theme$court, color = court_theme$court),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      legend.background = element_rect(fill = court_theme$court, color = court_theme$court),
+      legend.margin = margin(-1, 0, 0, 0, unit = 'lines'),
+      legend.position = 'bottom',
+      legend.key = element_blank(),
+      legend.text = element_text(size = rel(1.0))
+    )
+}
+
+```
+## Explore the Data
+
+Take a look at total points per year.
+
+```{r}
+# Get season names to be used in getSeasonStats.
+allSeasons <- NBAFull %>%
+  select('SEASON_2') %>%
+  distinct()
+
+# Get the season stats for each season, and make seasons an ordered factor.
+allShots <- getSeasonStats(NBAFull, allSeasons$SEASON_2) %>%
+  mutate(SEASON_2 = factor(SEASON_2, levels = allSeasons$SEASON_2))
+```
+
+```{r, message = FALSE}
+
+# Get averages statistics on each player during each individual season.
+allplayers <- NBAFull %>%
+  group_by(SEASON_2, PLAYER_NAME) %>%
+  summarize(GP = n_distinct(GAME_ID), # Number of games played during the season.
+            FG = sum(SHOT_MADE), # Number of all FGs made.
+            FGA = n(), # Number of FGs attempted.
+            FG2 = sum(SHOT_MADE[SHOT_TYPE == '2PT Field Goal']), # Number of 2pt FGs made.
+            FGA2 = sum(SHOT_TYPE == '2PT Field Goal'), # Number of 2pt FGs attempted.
+            FG3 = sum(SHOT_MADE[SHOT_TYPE == '3PT Field Goal']), # Number of 3pt FGs made.
+            FGA3 = sum(SHOT_TYPE == '3PT Field Goal'), # Number of 3pt FGs made.
+            PTS2 = calcFGPoints(FG2, 2), # Total points scored from 2pt FGs.
+            PTS3 = calcFGPoints(FG3, 3), # Total points scored from 3pt FGs.
+            TotPts = PTS2 + PTS3, # Total points scored from both 2pt and 3pt FGs.
+            PPG = calcPerc(TotPts, GP), # Average points scored each game during the season.
+            FG2Perc = calcPerc(FG2, FGA2), # Average 2pt FG% for the season.
+            FG3Perc = calcPerc(FG3, FGA3), # Average 3pt FG% for the season.
+            FGPerc = calcPerc(FG, FGA)) # Average of both 2pt and 3pt FG%.
+
+# This gets all qualified shooters' cumulative stats for each season, used to find league averages.
+allPlayersSummary <- allplayers  %>%
+  filter(FG >= 100) %>%
+  group_by(SEASON_2) %>%
+  summarise(totFG = sum(FG),# Total field goals made.
+            meanFG = mean(FG), # Mean FG made.
+            totFGA = sum(FGA), # Total field goals attempted.
+            totFG2 = sum(FG2), # Total 2pt FGs made.
+            totFGA2 = sum(FGA2), # total 2pt FGs attempted.
+            totFG3 = sum(FG3), # Total 3pt FGs made.
+            totFGA3 = sum(FGA3), # Total 3pt FGs attempted.
+            totPts2 = sum(PTS2), # Total points from 2pt FGs.
+            totPts3 = sum(PTS3), # Total points from 3pt FGs.
+            totPts = sum(TotPts), # Total points from both 2pt and 3pt FGs.
+            meanFG2Perc = mean(FG2Perc), # Average 2pt FG%.
+            meanFG3Perc = mean(FG3Perc)) # Average 3pt FG%.
+```
+
+```{r}
+# Plot the total points scored each season.
+ggplot(allShots, aes(x = SEASON_2, y = TotPts, group = 1)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle('Total Points per NBA Season (2003-2024)') +
+  labs(x = 'NBA Season', y = 'Total Points')
+```
+The total points scored per season appears to increase steadily over the years. The significant drop off in the 2011-12 season was caused by the lockout where only 990 games out of the usual 1230 were played [@nba2011_2012]. The other drop off occurs during the COVID-19 Pandemic which caused only 1059 and 1076 regular season games to occur [@nba2020_2021 & @nba2019_2020]. Fewer games and chances to score points will have a significant impact on total points for the year. Now to take a look if the mean amount of points scored were affected by the shutdowns.
+
+Take a look at mean points per game over the seasons.
+
+```{r}
+ggplot(allShots,
+       aes(x = SEASON_2, y = PPG, group = 1)) +
+  geom_line() +
+  geom_point() +
+  geom_point(data = filter(allShots, SEASON_2 == '2011-12'), aes(x = SEASON_2, y = PPG), color = 'red') +
+  geom_point(data = filter(allShots, SEASON_2 == '2021-22'), aes(x = SEASON_2, y = PPG), color = 'red') +
+  annotate('text', x = '2011-12', y = 158, label = 'NBA Lockout', hjust = -0.05) +
+  annotate('text', x = '2021-22', y = 186, label = 'COVID-19', hjust = -0.05) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Mean Points per Game by NBA Season (2003-2024)') +
+  labs(subtitle = 'The NBA preseason was canceled for both 2011-12 and 2021-22 seasons',
+       x = 'NBA Season', y = 'Mean Points per Game')
+```
+This plot follows the trend of offenses scoring more points. Even the 2020-21 season that was shortened was on track to have the highest points per game. The seasons that have the points-per-game dip are also the ones that had the preseason cancelled. 
+
+What could be contributing to the increases in offense?
+
+```{r}
+ggplot(allShots) +
+  geom_line(aes(x = SEASON_2, y = PG2, group = 1, color = '2-point')) +
+  geom_point(aes(x = SEASON_2, y = PG2, group = 1, color = '2-point')) +
+  geom_line(aes(x = SEASON_2, y = PG3, group = 1, color = '3-point')) +
+  geom_point(aes(x = SEASON_2, y = PG3, group = 1, color = '3-point')) +
+  scale_color_manual(values = c('2-point' = 'blue', '3-point' = 'red')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.background = element_rect(fill = 'white', color = 'white'),
+        legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4)) +
+  ggtitle('Mean Points from 2- and 3-point Field Goals per Game (2003-2024)') +
+  labs(x = 'NBA Season', y = 'Mean Points per Game', color = 'Field Goal Type')
+```
+This plot displays the mean points scored by 2- and 3-point field goals per game. The 2-point field goals have remained steady with a slight decrease starting in 2009-10. Mean points scored by 3-point field goals have been increasing dramatically since 2011-12. Starting at around a mean of 30 points per game coming from 3-point field goals to nearly a mean of 70 points coming from 3-point field goals.
+
+Clearly offenses are starting to utilize the 3-point field goal more, but have NBA players increased their ability to successfully make them?
+
+```{r}
+ggplot(allPlayersSummary, aes(x = SEASON_2)) +
+  geom_line(aes(y = meanFG2Perc, group = 1, color = '2-point%')) +
+  geom_point(aes(y = meanFG2Perc, group = 1, color = '2-point%')) +
+  geom_line(aes(y = meanFG3Perc, group = 1, color = '3-point%')) +
+  geom_point(aes(y = meanFG3Perc, group = 1, color = '3-point%')) +
+  scale_color_manual(values = c('2-point%' = 'blue', '3-point%' = 'red')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.background = element_rect(fill = 'white', color = 'white'),
+        legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4)) +
+  ggtitle('Mean Field Goal Percentages from Qualified Shooters (2003-2024)') +
+  labs(subtitle = 'Means taken from players with at least 100 field goals made during the season.',
+       x = 'NBA Season', y = 'Mean Field Goal Percentage', color = 'Field Goal Type')
+```
+The mean field goal percentage for both 2- and 3-point field goals have increased over the years, both increasing by 10 percentage points since the 2003-04 season.
+
+### Exploration Findings
+ From the NBA Lockout to 2023-24 Season:
+
+- The mean points per game has increased by 22%.
+- The mean points scored by 3-point field goals has increased 102%.
+- The mean 2-point field goal percentage has increased 6.6 percentage points.
+- The mean 3-point field goal percentage has increased 7.2 percentage points.
+
+## Statistical Analysis
+### Expected Values
+To win games, teams must score more points than their opponents. This has teams focus on the types of shots that will yield the highest value. While a 3-point field goal offers an inherent value of one additional point over a 2-point field goal, this extra point is not guaranteed, and neither are the two points from a 2-point field goal.
+
+Assume that all the 2-point field goals and all the 3-point field goals have the same probability of success. For this example, the 2003-04 NBA season's average field goal percentages were 0.46 success rate for a 2-point field goal and 0.25 success rate for a 3-point field goal.
+
+Expected values are used to determine which type of shot gives the most value. The expected value is calculated by multiplying the probability of success by the points awarded for each shot.
+
+$$EV_2 = P(2PT) * 2 = 0.46 * 2 = 0.92$$ 
+
+$$EV_3 = P(3PT) * 3 = 0.25 * 3 = 0.75$$
+
+With these current probabilities, there is more value in taking a 2-point field goal over a 3-point field goal because the expected return is 0.92 compared to 0.75.
+
+Now a simulation will be run to see how many points on average could be scored if 100 shots were taken with these probabilities.
+
+```{r}
+# Initialize random seed, number of simulations and trials, and probabilities.
+sims = 1000
+shots2 = 100
+shots3 = 100
+p2 = 0.46
+p3 = 0.25
+
+# Run simulations and get the number of success (made shots) for each trial.
+success2 <- rbinom(sims, shots2, p2)
+success3 <- rbinom(sims, shots3, p3)
+
+# Calculate the points associated with the made shots.
+point2 <- success2 * 2
+point3 <- success3 * 3
+
+ggplot() +
+  geom_histogram(aes(x = point2, y = after_stat(density), fill = '2-point'), binwidth = 5, color = 'black', alpha = 0.5, position = 'identity') +
+  geom_histogram(aes(x = point3, y = after_stat(density), fill = '3-point'), binwidth = 5, color = 'black', alpha = 0.5, position = 'identity') +
+  scale_fill_manual( name = 'Field Goal Type', values = c('2-point' = 'blue', '3-point' = 'red'),
+    labels = c('2-point' = '2-point', '3-point' = '3-point')) +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Distributions of Points Scored from 2-point and 3-point Field Goals') +
+  labs(x = 'Total Points', y = 'Density')
+```
+```{r}
+cat('Mean points from 2-point field goals:', mean(point2), '\n')
+cat('Mean points from 3-point field goals:', mean(point3), '\n')
+```
+The 2-point field goals having a higher mean indicates that on average the 2-point field goal would have the potential to score more points more consistently than the 3-point field goals. Examining the distributions of the two also shows that the values for 2-point field goals have less variability compared to the 3-point field goals. With the probabilities set at 2003-04 NBA season field goal percentages, 2-point field goals would yield higher average points and provide a more predictable performance.
+
+Now a independent t-test will be run on the two samples to see if the two distributions are statistically different, with an alpha set to 0.05.
+$$H_0: \mu_2 = \mu_3$$
+$$H_A: \mu_2 \neq \mu_3$$
+```{r}
+# Perform t-test.
+tResult <- t.test(point2, point3)
+
+# Report results.
+cat('p-value: ', tResult$p.value)
+```
+The p-value from the t-test is below our significance level of 0.05, leading us to reject the hypothesis that the two means are the same. This indicates that, based on the field goal percentages from the 2003-04 NBA season, 2-point field goals scored more consistently than 3-point field goals. However, previous plots have revealed that field goal percentages for both 2- and 3-point field goals have increased. How would these changes affect the means of points scored by 2- and 3-point field goals?
+```{r}
+# Initialize results dataframe
+bnomResults <- data.frame(matrix(ncol = 5, nrow = length(allSeasons$SEASON_2)))
+colnames(bnomResults) <- c('SEASON_2', 'FG2Perc', 'FG3Perc', 'mean2Pts', 'mean3Pts')
+bnomResults$SEASON_2 <- allSeasons$SEASON_2
+bnomResults$FG2Perc <- allPlayersSummary$meanFG2Perc
+bnomResults$FG3Perc <- allPlayersSummary$meanFG3Perc
+
+# Set simulation parameters
+sims = 1000
+shots = 100
+
+for (i in 1:nrow(bnomResults)) {
+  # Set probabilities.
+  p2 <- bnomResults$FG2Perc[i]
+  p3 <- bnomResults$FG3Perc[i]
+  
+  # Run simulations and get the number of success (made shots) for each trial.
+  success2 <- rbinom(sims, shots, p2)
+  success3 <- rbinom(sims, shots, p3)
+  
+  # Calculate points per sim.
+  pts2 <- success2 * 2
+  pts3 <- success3 * 3
+  
+  # Calculate mean.
+  meanPts2 <- mean(pts2)
+  meanPts3 <- mean(pts3)
+  
+  # Store results
+  bnomResults$mean2Pts[i] <- meanPts2
+  bnomResults$mean3Pts[i] <- meanPts3
+}
+```
+```{r}
+ggplot(bnomResults, aes(x = SEASON_2)) +
+  geom_point(aes(y = mean2Pts, group = 1, color = '2-point')) +
+  geom_line(aes(y = mean2Pts, group = 1, color = '2-point')) +
+  geom_point(aes(y = mean3Pts, group = 1, color = '3-point')) +
+  geom_line(aes(y = mean3Pts, group = 1, color = '3-point')) +
+  scale_color_manual(values = c('2-point' = 'blue', '3-point' = 'red')) +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white'),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle('Mean Total Points from Binomial Simulation (2003-2024)') +
+  labs(subtitle = 'Probabilities for 2- and 3-point field goals determined by league average',
+       x = 'Season', y = 'Total Points', color = 'Shot Type')
+```
+From the binomial simulations, the 2-point field goals consistently have a higher mean total points scored. However, the mean points from 3-point field goals begin to close the gap significantly starting in the 2015-16 season, where the 3-point field goal percentage is 0.33 and the 2-point field goal percentage is 0.48. The gap is most narrow in the 2019-20 season, with a mean total of 106 points from 2-point field goals (2FG% = 0.53) and 99 points from 3-point field goals (3FG% = 0.33). Despite a 20% higher likelihood of making 2-point field goals, it only resulted in 7 more points on average.
+```{r}
+bnomEvalSims(1000, 100, 0.53, 0.33, TRUE)
+```
+This distribution of the binomial simulation illustrates the potential value of taking a 3-point field goal over a 2-point field goal even when there is less likelihood of success. These simulations also treated each shot as having the same probability, when in reality not every 2-point field goal and every 3-point field goal have the same probability of success.
+
+### Zones and Ranges
+
+```{r, message = FALSE}
+# Get the field goal percentage of qualifying shooters for each zone.
+zoneNames <- NBAFull %>%
+  group_by(PLAYER_NAME, ZONE_NAME, SHOT_TYPE) %>%
+  summarize(FG = sum(SHOT_MADE),
+            FGA = n(),
+            FGPerc = calcPerc(FG, FGA)) %>%
+  filter(FG > 100)
+
+# Get the field goal percentage of qualifying shooters for each range.
+zoneRanges <- NBAFull %>%
+  group_by(PLAYER_NAME, ZONE_RANGE, SHOT_TYPE) %>%
+  summarize(FG = sum(SHOT_MADE),
+            FGA = n(),
+            FGPerc = calcPerc(FG, FGA)) %>%
+  filter(FG > 100 & ZONE_RANGE != 'Backcourt Shot')
+
+# Get the field goal percentage fo qualifying shooters for each zone-range combination.
+allZones <- NBAFull %>%
+  group_by(PLAYER_NAME, ZONE_NAME, ZONE_RANGE, SHOT_TYPE) %>%
+  summarize(FG = sum(SHOT_MADE),
+            FGA = n(),
+            FGPerc = calcPerc(FG, FGA),
+            medX = median(LOC_X),
+            medY = median(LOC_Y)) %>%
+  filter(FG > 100 & ZONE_RANGE != 'Backcourt Shot') %>%
+  ungroup %>%
+  group_by(ZONE_NAME, ZONE_RANGE) %>%
+  summarize(FGPerc = mean(FGPerc),
+            medX = median(medX),
+            medY = median(medY))
+
+allZones <- NBAFull %>%
+  group_by(PLAYER_NAME, ZONE_NAME, ZONE_RANGE, SHOT_TYPE) %>%
+  summarize(
+    FG = sum(SHOT_MADE),
+    FGA = n(),
+    FGPerc = calcPerc(FG, FGA),
+    medX = median(LOC_X),
+    medY = median(LOC_Y)) %>%
+  filter(FG > 100 & ZONE_RANGE != 'Backcourt Shot') %>%
+  ungroup() %>%
+  group_by(ZONE_NAME, ZONE_RANGE) %>%
+  summarize(
+    FGPerc = mean(FGPerc, na.rm = TRUE),
+    medX = median(medX, na.rm = TRUE),
+    medY = median(medY, na.rm = TRUE))
+
+# Get X Y for each shot type, zone
+locs <- NBAFull %>%
+  group_by(SHOT_TYPE, ZONE_NAME) %>%
+  summarize(meanX = median(LOC_X),
+            meanY = median(LOC_Y))
+```
+```{r}
+ggplot(zoneRanges, aes(x = ZONE_RANGE, y = FGPerc, fill = SHOT_TYPE)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c('2PT Field Goal' = '#ADD8EF', '3PT Field Goal' = '#FF999D')) +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Field Goal Percentage Based on Range from Basket') +
+  labs(x = 'Range', y = 'FG%', fill = 'Field Goal Type') 
+```
+The boxplot shows that there is a significant difference in field goal percentage the closer the field goal is taken toward the basket. With the median field goal percentage around 0.55, and the rest of 2-point field goals having a median field goal percentage hovering around 0.4. The median field goal percentage for 3-point field goals approximately 0.38, which is close to the median probability for 2-point field goals taken from 8-16 feet and 16-24 feet.
+
+```{r, warning = FALSE}
+ggplot(zoneNames, aes(x = ZONE_NAME, y = FGPerc, fill = SHOT_TYPE)) +
+  geom_boxplot() +  # Add notches and remove outliers
+  scale_fill_manual(values = c('2PT Field Goal' = '#ADD8EF', '3PT Field Goal' = '#FF999D')) +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Field Goal Percentage Based on Orientation from Basket') +
+  labs(x = 'Orientation', y = 'FG%', fill = 'Field Goal Type')
+```
+The boxplot reveals that the orientation of the field goal relative to the basket significantly impacts field goal percentage. There is a notable difference in the field goal percentages for 2-point field goals taken from the center of the court compared to all other 2- and 3-point field goals. The 2-point field goals taken from either the left side center or right side center have similar field goal percentages, which are higher than those for 3-point shots taken from the same orientations. The median field goal percentage for 3-point field goals taken from either the left or right side is comparable to that of 2-point shots taken from the same orientations.
+
+The distance and orientation of the field goal have an impact on the field goal percentage. Now to take a look at how the interaction between range and orientation affect the field goal percentage.
+```{r, warning = FALSE}
+# Plot court with points colored by FG%
+plot_court() +
+  geom_point(data = allZones, aes(x = medX, y = medY, color = FGPerc), size = 4) +
+  geom_label_repel(data = allZones, aes(x = medX, y = medY, 
+                                        label = scales::percent(FGPerc, accuracy = 0.01)),
+                   size = 3.5, fill = 'white', color = 'black', 
+                   box.padding = 0.35, point.padding = 0.3,
+                   segment.color = 'grey50') +
+  scale_color_gradient(low = 'red', high = 'green', name = 'Mean FG%') +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Mean Field Goal Percentage by Range and Orientation of Field Goal') +
+  labs(x = 'Orientation', y = 'Range')
+```
+The scatterplot features a basketball court and points representing the median locations of shots taken in specific ranges and orientations. The percentages are the field goal percentages for each range/orientation combination.
+
+The field goal with the highest percentage, at 55.94%, is taken within 8 feet of the basket, oriented in the center. As the distance from the basket increases, the field goal percentage decreases. Shots taken between 8 and 16 feet from the center are the next highest in percentage, at 44.36%. Field goals taken between 16 and 24 feet hover around 42%.
+
+Among 3-point shots, the highest percentages, around 40%, are from the left or right side. In contrast, 3-point shots taken from the left-center to right-center have the lowest field goal percentage, at approximately 35%.
+
+Now that we have probabilities for the different field goal locations, we can get the expected values for those field goals.
+
+```{r, warning = FALSE}
+# Add a row with expected values.
+allZones <- allZones %>%
+  mutate(EVal = ifelse(ZONE_RANGE == '24+ ft.', FGPerc * 3, FGPerc * 2))
+
+# Set seed for consistent label repel.
+set.seed(204)
+
+plot_court() +
+  geom_point(data = allZones, aes(x = medX, y = medY, color = EVal), size = 4) +
+  geom_label_repel(data = allZones, aes(x = medX, y = medY, label = round(EVal, 2)), 
+                   size = 3.5, fill = 'white', color = 'black', box.padding = 0.35, 
+                   point.padding = 0.3, segment.color = 'grey50') +
+  scale_color_gradient(low = 'red', high = 'green', name = 'Expected Value') +
+  theme_minimal() +
+  theme(legend.background = element_rect(fill = 'white', color = 'black', 
+                                         linewidth = 0.4, linetype = 'solid'),
+        plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Expected Value by Range and Orientation') +
+  labs(x = 'Orientation', y = 'Range')
+```
+The plot shows that 3-point field goals taken from the left and right orientations have the highest expected value, 1.23 and 1.21 respectively. Following these are the field goals taken from the center within 8 feet of the basket with an expected value of 1.12. Next, despite having the lowest field goal percentage, 3-point shots at the top of the arc have expected values around 1.1. The remaining 2-point field goals have expected values around the mid 0.80s.
+
+In the previous simulations, the field goal percentages were taken as the average of all 2- and 3-point field goals. However, as the previous plots have shown, not every 2- and 3-point field goal has the same field goal percentage. Examining the probabilities used for the previous simulation, the 2-point field goal probabilities represented shots taken closer to the basket, while the 3-point field goal percentage reflected shots taken from the top of the arc, not those taken from the corners.
+
+### Field Goal Selection
+
+The lowest expected values come from 2-point field goals taken between 8-24 feet from the basket. This is because their field goal percentages are similar to those of 3-point field goals, but 3-point field goals yield a higher return when successful.
+
+In our previous simulation, we used the 2-point field goal probability for shots taken from the center within 8 feet of the basket, which has the highest probability and expected value among 2-point field goals. The 3-point field goal percentage used in the simulation was more reflective of shots taken from the top of the arc, oriented closer to the center, rather than 3-point field goals taken from the corners.
+
+Now, let’s run a simulation that compares the highest expected value field goals for both 2- and 3-point field goals.
+
+```{r}
+bnomEvalSims(1000, 100,0.5594, 0.4094, TRUE)
+```
+The p-value for these two samples is below the significance level of 0.05, leading us to reject the hypothesis that the two samples have the same mean. Although both means for 2- and 3-point field goals increased, the mean of total points for 3-point field goals is now higher than that for 2-point field goals. Examining the distributions of the two samples shows that 2-point field goals consistently score between 105 to 115 points, while 3-point field goals most often score between 115 to 130 points, with the potential to score even higher, reaching into the 130s range. Both types of field goals demonstrate a consistency in scoring within the 100-point range, making them both effective field goals to take.
+
+Now to take a look at the other types of 2-point field goals compared to the 3-point field goals.
+```{r}
+bnomEvalSims(1000, 100, 0.4262, 0.4094, TRUE)
+```
+The p-value for these two distributions is below the significance level, leading us to reject the null hypothesis that the means of the two samples are equal. The mean for corner 3-point field goals is significantly higher (122) compared to the mean for mid-range 2-point field goals (85). While both have a similar field goal percentage, shooting from the corner 3-point position has significantly more value. The distributions of the two samples show that mid-range 2-point field goals consistently score between 80 and 90 points, whereas corner 3-point field goals consistently score between 105 and 130 points. The low end of the scoring potential for 3-point field goals is around the mid to high potential for mid-range 2-point field goals.
+
+Corner 3-point field goals are clearly worth the risk, what about the 3-point field goals at the top of the arc?
+```{r}
+bnomEvalSims(1000, 100, 0.4209, 0.364, TRUE)
+```
+The p-value for these two distributions is below the significance level, leading to the rejection of the null hypothesis that the means are equal. The 3-point fields at the top of the arc still outscore the mid-range 2-point field goals even when there is an approximately -6% likelihood of success.
+
+### Statistical Analysis Findings
+
+The field goal percentages for all 2-point field goals and for 3-point field goals are not the same. For 2-point field goals, the percentage increases the closer to the basket and the more center the orientation with the highest 2-point field goal percentage occurring in the center and within 8 feet of the basket (55.94%) and the lowest percentage coming from field goals taken between 16 and 24 feet on either the left or right side of the basket (~42%). For 3-point field goals, orientation from the basket matters with the highest percentage occurring to the left (40.94%) and right (40.34%) of the basket. The closer to center the orientation for 3-point field goals, the lower the percentage with the lowest occurring above the top of the arc in the center (35.67%).
+
+Using the differentiated 2- and 3-point field goal probabilities in binomial simulations, the 3-point field goals consistently outperformed the 2-point field goals. The total point mean that was the most significant was between the 2-point field goals occurring within 16-24 feet and having orientation left or right of the basket (85) and the 3-point field goals occurring in either left or right corners (122). 
+
+A team looking to maximize their returns from the field goals they decide to take should prioritize field goals that are toward the center and close to the basket, or in the corners behind the 3-point line.
+
+Now we know that scoring in the NBA and the utilization of the 3-point field goal are on the rise, but are the field goals being taken by NBA teams today different than those in the early 2000s?
+
+```{r}
+# Get all shot locations of the 2003-04 season.
+shotLocations03 <- NBAFull %>%
+  filter(SEASON_2 == '2003-04') %>%
+  select(LOC_X, LOC_Y)
+
+# Get all shot locations of the 2023-04 season.
+shotLocations23 <- NBAFull %>%
+  filter(SEASON_2 == '2023-24') %>%
+  select(LOC_X, LOC_Y)
+```
+
+```{r, warning = FALSE}
+plot_court(court_theme = court_themes$white) +
+  geom_point(data = shotLocations03, aes(x = LOC_X, y = LOC_Y), alpha = 0.01) +
+  theme_minimal() +
+  theme(plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Locations of All Field Goals Taken in the 2003-04 Season') +
+  labs(x = 'Orientation', y = 'Range')
+```
+```{r, warning = FALSE}
+plot_court() +
+  geom_point(data = shotLocations23, aes( x = LOC_X, y = LOC_Y), alpha = 0.01) +
+  theme_minimal() +
+  theme(plot.background = element_rect(fill = 'white', color = 'white')) +
+  ggtitle('Locations of All Field Goals Taken in the 2023-24 Season') +
+  labs(x = 'Orientation', y = 'Range')
+
+```
+When comparing the two scatter plots, NBA players in the 2003-04 season were attempting field goals at fairly equal density across the range of less than 8 feet to 24+ feet. During the 2023-24 season, players are attempting field goals at a higher rate at the ranges of less than 8 feet and 24+ feet, with shots occurring within the 16-24 feet on either side of basket virtually disappearing. This suggests that NBA teams are aware of the expected value and likelihood of each field goal by range and orientation and are attempting to maximize their total points.
+
+Future analysis into teams based on their overall records could reveal if all teams have made the shift to optimizing field goal attempts and total points, if the expected value and likelihood of each field goal vary for different players, or if those change based on defensive strategies. 
+
+## References
