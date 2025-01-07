@@ -200,11 +200,10 @@ calcFGPoints <- function(FG, pts) {
   return(FG * pts)
 }
 
-
 calcPerc <- function(num, denom) {
   # Calculates percentage with 0 divisor handled.
   # num = numerator, usually in the form of Field Goals made.
-  # den = denominator, usually in the form of Field Goals attempted.
+  # denom = denominator, usually in the form of Field Goals attempted.
   # Returns rounded percentage with 0 divisor handled.
   if (denom > 0) {
     return(round(num / denom, 3))
@@ -212,7 +211,6 @@ calcPerc <- function(num, denom) {
     return(0)
   }
 }
-
 
 getSeasonStats <- function(data, seasons) {
   # Used to get League wide statistics for each season.
@@ -241,7 +239,6 @@ getSeasonStats <- function(data, seasons) {
   
   return(outDF)
 }
-
 
 bnomEvalSims <- function(sims, trials, FGPerc2, FGPerc3, conductT = FALSE) {
   # Used to run Binomial simulations and report results through histograms.
@@ -512,6 +509,7 @@ ggplot(allShots, aes(x = SEASON_2, y = TotPts, group = 1)) +
   ggtitle('Total Points per NBA Season (2003-2024)') +
   labs(x = 'NBA Season', y = 'Total Points')
 ```
+
 The total points scored per season appears to increase steadily over the years. The significant drop off in the 2011-12 season was caused by the lockout where only 990 games out of the usual 1230 were played [@nba2011_2012]. The other drop off occurs during the COVID-19 Pandemic which caused only 1059 and 1076 regular season games to occur [@nba2020_2021 & @nba2019_2020]. Fewer games and chances to score points will have a significant impact on total points for the year. Now to take a look if the mean amount of points scored were affected by the shutdowns.
 
 Take a look at mean points per game over the seasons.
@@ -532,6 +530,7 @@ ggplot(allShots,
   labs(subtitle = 'The NBA preseason was canceled for both 2011-12 and 2021-22 seasons',
        x = 'NBA Season', y = 'Mean Points per Game')
 ```
+
 This plot follows the trend of offenses scoring more points. Even the 2020-21 season that was shortened was on track to have the highest points per game. The seasons that have the points-per-game dip are also the ones that had the preseason cancelled. 
 
 What could be contributing to the increases in offense?
@@ -550,6 +549,7 @@ ggplot(allShots) +
   ggtitle('Mean Points from 2- and 3-point Field Goals per Game (2003-2024)') +
   labs(x = 'NBA Season', y = 'Mean Points per Game', color = 'Field Goal Type')
 ```
+
 This plot displays the mean points scored by 2- and 3-point field goals per game. The 2-point field goals have remained steady with a slight decrease starting in 2009-10. Mean points scored by 3-point field goals have been increasing dramatically since 2011-12. Starting at around a mean of 30 points per game coming from 3-point field goals to nearly a mean of 70 points coming from 3-point field goals.
 
 Clearly offenses are starting to utilize the 3-point field goal more, but have NBA players increased their ability to successfully make them?
@@ -569,6 +569,7 @@ ggplot(allPlayersSummary, aes(x = SEASON_2)) +
   labs(subtitle = 'Means taken from players with at least 100 field goals made during the season.',
        x = 'NBA Season', y = 'Mean Field Goal Percentage', color = 'Field Goal Type')
 ```
+
 The mean field goal percentage for both 2- and 3-point field goals have increased over the years, both increasing by 10 percentage points since the 2003-04 season.
 
 ### Exploration Findings
@@ -688,6 +689,7 @@ ggplot(bnomResults, aes(x = SEASON_2)) +
   labs(subtitle = 'Probabilities for 2- and 3-point field goals determined by league average',
        x = 'Season', y = 'Total Points', color = 'Shot Type')
 ```
+
 From the binomial simulations, the 2-point field goals consistently have a higher mean total points scored. However, the mean points from 3-point field goals begin to close the gap significantly starting in the 2015-16 season, where the 3-point field goal percentage is 0.33 and the 2-point field goal percentage is 0.48. The gap is most narrow in the 2019-20 season, with a mean total of 106 points from 2-point field goals (2FG% = 0.53) and 99 points from 3-point field goals (3FG% = 0.33). Despite a 20% higher likelihood of making 2-point field goals, it only resulted in 7 more points on average.
 ```{r}
 bnomEvalSims(1000, 100, 0.53, 0.33, TRUE)
@@ -713,7 +715,7 @@ zoneRanges <- NBAFull %>%
             FGPerc = calcPerc(FG, FGA)) %>%
   filter(FG > 100 & ZONE_RANGE != 'Backcourt Shot')
 
-# Get the field goal percentage fo qualifying shooters for each zone-range combination.
+# Get the field goal percentage of qualifying shooters for each zone-range combination.
 allZones <- NBAFull %>%
   group_by(PLAYER_NAME, ZONE_NAME, ZONE_RANGE, SHOT_TYPE) %>%
   summarize(FG = sum(SHOT_MADE),
@@ -760,6 +762,7 @@ ggplot(zoneRanges, aes(x = ZONE_RANGE, y = FGPerc, fill = SHOT_TYPE)) +
   ggtitle('Field Goal Percentage Based on Range from Basket') +
   labs(x = 'Range', y = 'FG%', fill = 'Field Goal Type') 
 ```
+
 The boxplot shows that there is a significant difference in field goal percentage the closer the field goal is taken toward the basket. With the median field goal percentage around 0.55, and the rest of 2-point field goals having a median field goal percentage hovering around 0.4. The median field goal percentage for 3-point field goals approximately 0.38, which is close to the median probability for 2-point field goals taken from 8-16 feet and 16-24 feet.
 
 ```{r, warning = FALSE}
@@ -772,6 +775,7 @@ ggplot(zoneNames, aes(x = ZONE_NAME, y = FGPerc, fill = SHOT_TYPE)) +
   ggtitle('Field Goal Percentage Based on Orientation from Basket') +
   labs(x = 'Orientation', y = 'FG%', fill = 'Field Goal Type')
 ```
+
 The boxplot reveals that the orientation of the field goal relative to the basket significantly impacts field goal percentage. There is a notable difference in the field goal percentages for 2-point field goals taken from the center of the court compared to all other 2- and 3-point field goals. The 2-point field goals taken from either the left side center or right side center have similar field goal percentages, which are higher than those for 3-point shots taken from the same orientations. The median field goal percentage for 3-point field goals taken from either the left or right side is comparable to that of 2-point shots taken from the same orientations.
 
 The distance and orientation of the field goal have an impact on the field goal percentage. Now to take a look at how the interaction between range and orientation affect the field goal percentage.
@@ -791,7 +795,8 @@ plot_court() +
   ggtitle('Mean Field Goal Percentage by Range and Orientation of Field Goal') +
   labs(x = 'Orientation', y = 'Range')
 ```
-The scatterplot features a basketball court and points representing the median locations of shots taken in specific ranges and orientations. The percentages are the field goal percentages for each range/orientation combination.
+
+The plot features a basketball court and points representing the median locations of shots taken in specific ranges and orientations. The percentages are the field goal percentages for each range/orientation combination.
 
 The field goal with the highest percentage, at 55.94%, is taken within 8 feet of the basket, oriented in the center. As the distance from the basket increases, the field goal percentage decreases. Shots taken between 8 and 16 feet from the center are the next highest in percentage, at 44.36%. Field goals taken between 16 and 24 feet hover around 42%.
 
@@ -820,6 +825,7 @@ plot_court() +
   ggtitle('Expected Value by Range and Orientation') +
   labs(x = 'Orientation', y = 'Range')
 ```
+
 The plot shows that 3-point field goals taken from the left and right orientations have the highest expected value, 1.23 and 1.21 respectively. Following these are the field goals taken from the center within 8 feet of the basket with an expected value of 1.12. Next, despite having the lowest field goal percentage, 3-point shots at the top of the arc have expected values around 1.1. The remaining 2-point field goals have expected values around the mid 0.80s.
 
 In the previous simulations, the field goal percentages were taken as the average of all 2- and 3-point field goals. However, as the previous plots have shown, not every 2- and 3-point field goal has the same field goal percentage. Examining the probabilities used for the previous simulation, the 2-point field goal probabilities represented shots taken closer to the basket, while the 3-point field goal percentage reflected shots taken from the top of the arc, not those taken from the corners.
@@ -888,6 +894,7 @@ plot_court() +
   labs(x = 'Orientation', y = 'Range')
 
 ```
+
 When comparing the two scatter plots, NBA players in the 2003-04 season were attempting field goals at fairly equal density across the range of less than 8 feet to 24+ feet. During the 2023-24 season, players are attempting field goals at a higher rate at the ranges of less than 8 feet and 24+ feet, with shots occurring within the 16-24 feet on either side of basket virtually disappearing. This suggests that NBA teams are aware of the expected value and likelihood of each field goal by range and orientation and are attempting to maximize their total points.
 
 Future analysis into teams based on their overall records could reveal if all teams have made the shift to optimizing field goal attempts and total points, if the expected value and likelihood of each field goal vary for different players, or if those change based on defensive strategies. 
