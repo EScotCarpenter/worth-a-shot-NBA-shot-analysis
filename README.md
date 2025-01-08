@@ -5,7 +5,7 @@ This project uses data collected and organized by [Dom Samangy](https://github.c
 
 The full report can be found inside of the [RMD file](WorthAShot.Rmd) or through the [rendered HTML](https://escotcarpenter.github.io/worth-a-shot-NBA-shot-analysis/WorthAShot.html).
 
-## Findings
+## Findings and Visualizations
 **From the NBA Lockout to 2023-24 Season:**
 - The mean points per game has increased by 22%.
 - The mean points scored by 3-point field goals has increased 102%.
