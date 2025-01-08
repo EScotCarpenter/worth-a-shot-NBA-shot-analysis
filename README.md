@@ -13,7 +13,7 @@ The full report can be found inside of the [RMD file](WorthAShot.Rmd) or through
 - The mean 3-point field goal percentage has increased 7.2 percentage points.
 
 **2- and 3-point field goal percentages change based on orientation and range from the basket.**
-| ![Scatter 2003-04](images/CourtFG.png) | ![Scatter 2023-24](images/CourtEvals.png) |
+| ![FG](images/CourtFG.png) | ![Evals](images/CourtEvals.png) |
 |----------------------------------------------|----------------------------------------------|
 
 **Shot selection has changed from the early 2000s, having more emphasis on close to the basket shots and corner 3s.**
