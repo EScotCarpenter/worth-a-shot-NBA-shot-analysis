@@ -1,6 +1,6 @@
 ---
 title: "Worth a Shot?"
-subtitle: "Anlaysis of NBA Shots (2003-2024)"
+subtitle: "Analysis of NBA Shots (2003-2024)"
 author: "Elbert Scot Carpenter"
 output: html_document
 bibliography: references.bib
